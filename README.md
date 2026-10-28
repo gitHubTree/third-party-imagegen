@@ -44,3 +44,31 @@ python install.py            # macOS/Linux 用 python3（须 3.11+）
 - [CPA / New API 管理员接入](skill/references/cpa-new-api.md)
 
 本地检查不会生成图片或产生图片调用费用；实际作图按供应商计费。仓库不包含密钥、个人配置或虚拟环境。
+
+## 自动测试（GitHub Actions）
+
+[![test](https://github.com/gitHubTree/third-party-imagegen/actions/workflows/test.yml/badge.svg)](https://github.com/gitHubTree/third-party-imagegen/actions/workflows/test.yml)
+
+GitHub Actions 是 GitHub 提供的自动运行服务。每次向仓库推送代码或提交 Pull Request，GitHub 都会在自己的服务器上临时开出全新的 Windows、macOS 和 Linux 环境，检查技能在各系统上能否正常安装和运行。上方徽章显示最近一次的结果，点击可查看每个环境的详细日志。
+
+每次测试的内容：
+
+| 环境 | Python | 说明 |
+| --- | --- | --- |
+| Windows、macOS、Ubuntu | 3.11 | 不装 Pillow，验证只用标准库也能工作 |
+| Windows、macOS、Ubuntu | 3.13 | 安装 Pillow，验证输出格式转换 |
+| Debian 系统自带 Python | 3.11 | 没有 ensurepip，验证常见服务器环境 |
+
+每个环境都运行两项测试：
+
+- `tests/test_imagegen.py`：配置读取、模型探测、错误分类、图片保存、网络失败提示等。供应商是模拟的，不发真实请求。
+- `tests/test_install.py`：用 `install.py` 往临时目录实际安装，再执行更新、备份和虚拟环境重建，最后运行 `--check`。
+
+测试不使用任何密钥或个人配置，不访问真实的供应商或 CC-Switch，不产生图片费用。公开仓库使用 GitHub Actions 免费。配置文件是 [.github/workflows/test.yml](.github/workflows/test.yml)；不需要时删除该文件，或在仓库 Settings → Actions 中停用。
+
+在本机运行同样的测试：
+
+```text
+python tests/test_imagegen.py
+python tests/test_install.py
+```
