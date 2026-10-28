@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import importlib.util
 import io
 import json
@@ -7,6 +8,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
+import urllib.error
 from PIL import Image
 
 source = Path(__file__).resolve().parents[1] / 'skill/scripts/imagegen.py'
@@ -31,8 +33,8 @@ class Opener:
 with tempfile.TemporaryDirectory() as td:
     home = Path(td)
     config = 'model_provider="custom"\n[model_providers.custom]\nbase_url="http://127.0.0.1:9999/v1"\nenv_key="TEST_IMAGE_KEY"\nrequires_openai_auth=true\n'
-    (home/'config.toml').write_text(config)
-    (home/'auth.json').write_text(json.dumps({'OPENAI_API_KEY':'auth-key','tokens':{'access_token':'do-not-use'}}))
+    (home/'config.toml').write_text('\ufeff' + config, encoding='utf-8')
+    (home/'auth.json').write_text('\ufeff' + json.dumps({'OPENAI_API_KEY':'auth-key','tokens':{'access_token':'do-not-use'}}), encoding='utf-8')
     assert m.resolve(home, {'TEST_IMAGE_KEY':'env-key'}) == ('http://127.0.0.1:9999/v1','env-key')
     assert m.resolve(home, {})[1] == 'auth-key'
     (home/'config.toml').write_text(config.replace('requires_openai_auth=true', 'requires_openai_auth=false'))
@@ -87,4 +89,74 @@ with tempfile.TemporaryDirectory() as td:
         assert m.main() == 0
     with patch.dict(os.environ,{'CODEX_HOME':str(home)}), patch('sys.argv',['imagegen','generate','--model','m','--prompt','p','--out',str(out)]), patch.object(m.urllib.request,'build_opener',side_effect=AssertionError('existing output must fail before request')):
         assert m.main() == 1
-print('PASS: config/auth priority, profile, model persistence, offline check, generation/edit payloads, credential isolation, image validation/save, overwrite prevention, redirect protection')
+    moderation = urllib.error.HTTPError(
+        'https://example.invalid/v1/images/generations', 400, 'bad request', {},
+        io.BytesIO(json.dumps({'error': {'code': 'moderation_blocked'}}).encode()),
+    )
+    assert m.classify_http_error(moderation) == ('moderation', ['moderation_blocked'])
+
+    def http_error(code, body):
+        return urllib.error.HTTPError('https://example.invalid', code, 'error', {}, io.BytesIO(json.dumps(body).encode()))
+    def no_channel(model):
+        return http_error(503, {'error': {'message': f'No available channel for model {model} under group default, key sk-secret123', 'type': 'new_api_error', 'code': 'model_not_found'}})
+    kind, ids = m.classify_http_error(no_channel('gpt-image-1'))
+    assert kind == 'model' and ids == ['new_api_error', 'model_not_found'] and 'sk-secret123' not in str(ids)
+    assert m.classify_http_error(http_error(503, {'error': {'message': 'auth_unavailable: no auth available (last upstream error: {"code":"server_is_overloaded"})'}}))[0] == 'transient'
+    assert m.classify_http_error(http_error(400, {'error': {'message': 'prompt is required'}}))[0] == 'prompt'
+    assert m.classify_http_error(http_error(401, {'error': {'message': 'Invalid token'}}))[0] == 'auth'
+    assert m.classify_http_error(http_error(503, {}))[0] == 'server'
+    assert m.classify_http_error(http_error(404, {}))[0] == 'route'
+
+    class Router:
+        def __init__(self, handler):
+            self.handler, self.requests = handler, []
+        def open(self, req, timeout):
+            self.requests.append(req)
+            return Response(self.handler(req))
+    def provider(working=(), status=None):
+        def handler(req):
+            if req.full_url.endswith('/models'):
+                return json.dumps({'data': [{'id': 'gpt-4o'}, {'id': 'flux-image'}]}).encode()
+            payload = json.loads(req.data)
+            if status:
+                raise http_error(status, {'error': {'message': 'Invalid token'}})
+            if payload['model'] not in working:
+                raise no_channel(payload['model'])
+            if 'prompt' not in payload:
+                raise http_error(400, {'error': {'message': 'prompt is required'}})
+            return json.dumps({'data': [{'b64_json': base64.b64encode(png).decode()}]}).encode()
+        return Router(handler)
+    def run(argv, opener):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, {'CODEX_HOME': str(home)}), patch('sys.argv', ['imagegen', *argv]),                 patch.object(m.urllib.request, 'build_opener', return_value=opener),                 contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            return m.main(), stdout.getvalue(), stderr.getvalue()
+    endpoint = 'https://example.invalid/v1'
+
+    op = provider(working=('gpt-image-2',))
+    code, stdout, _ = run(['discover'], op)
+    assert code == 0 and 'gpt-image-2' in stdout
+    assert m.saved_model(home, endpoint) == 'gpt-image-2'
+    probes = [json.loads(r.data) for r in op.requests if not r.full_url.endswith('/models')]
+    assert [p['model'] for p in probes] == ['saved-by-cli', 'flux-image', 'gpt-image-2'], probes
+    assert all('prompt' not in p for p in probes), 'Probes must never send a prompt'
+
+    code, stdout, _ = run(['--check'], provider())
+    assert code == 0 and 'gpt-image-2（本地记忆）' in stdout and '远程服务' in stdout and 'second-key' not in stdout
+
+    stale_out = home/'stale.png'
+    code, _, stderr = run(['generate', '--prompt', 'p', '--out', str(stale_out)], provider())
+    assert code == m.EXIT_MODEL and 'discover' in stderr and '已清除' in stderr and 'sk-secret123' not in stderr
+    assert m.saved_model(home, endpoint) is None and not stale_out.exists()
+
+    code, _, stderr = run(['generate', '--prompt', 'p', '--out', str(stale_out)], provider())
+    assert code == m.EXIT_MODEL and 'discover' in stderr, 'Missing model must point to discover'
+
+    code, _, stderr = run(['discover'], provider())
+    assert code == m.EXIT_MODEL and 'gpt-image-1：无可用渠道' in stderr and m.saved_model(home, endpoint) is None
+
+    code, _, _ = run(['discover'], provider(status=401))
+    assert code == m.EXIT_AUTH
+
+    code, stdout, _ = run(['generate', '--model', 'gpt-image-1', '--prompt', 'p', '--out', str(stale_out)], provider(working=('gpt-image-1',)))
+    assert code == 0 and stale_out.is_file() and m.saved_model(home, endpoint) == 'gpt-image-1', 'Successful model must be remembered'
+print('PASS: config/auth priority, profile, model persistence, offline check, generation/edit payloads, credential isolation, image validation/save, overwrite prevention, redirect protection, error classification, model discovery, stale model invalidation')
