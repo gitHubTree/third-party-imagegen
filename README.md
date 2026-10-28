@@ -8,9 +8,17 @@
 
 > 请读取 https://github.com/gitHubTree/third-party-imagegen ，按 docs/install.md 安装为当前用户全局可用，后续生成和编辑图片优先使用这个技能。
 
-**给执行安装的 Codex：请先读取 [安装与更新步骤](docs/install.md)，识别当前操作系统后读取对应平台文档，再完成安装和本地检查。**
+**给执行安装的 Codex：克隆仓库后在仓库根目录运行 `install.py`（Windows 用 `python`，macOS/Linux 用 Python 3.11+ 的 `python3`），按输出处理提示。细节见 [安装与更新步骤](docs/install.md)。**
 
-需要 Python 3.11+、可联网安装依赖，以及已经配置好的 Codex 供应商。供应商须支持图片 API；聊天能用不代表图片一定能用。
+也可以自己安装：
+
+```text
+git clone https://github.com/gitHubTree/third-party-imagegen.git
+cd third-party-imagegen
+python install.py            # macOS/Linux 用 python3（须 3.11+）
+```
+
+需要 Python 3.11+ 和已经配置好的 Codex 供应商；技能只用标准库，安装不需要 pip 联网。Pillow 可选（`--with-pillow`），只用于转换输出格式。供应商须支持图片 API；聊天能用不代表图片一定能用。
 
 ## 使用
 
@@ -26,7 +34,7 @@
 
 ## 更新与排错
 
-更新只需说：“请按这个仓库的安装文档更新第三方图片技能：https://github.com/gitHubTree/third-party-imagegen”。
+更新：在仓库中 `git pull` 后重新运行 `install.py`。脚本会先备份旧版本，保留模型记忆和 `.venv`，可重复运行。也可以对 Codex 说：“请按这个仓库的安装文档更新第三方图片技能：https://github.com/gitHubTree/third-party-imagegen”。
 
 - [安装与更新步骤](docs/install.md)
 - [Windows 安装](skill/references/install-windows.md)

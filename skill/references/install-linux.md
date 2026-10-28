@@ -1,23 +1,23 @@
 # Linux 安装与更新
 
-Linux 与 macOS 使用相同的 Python 入口；仅在安装、更新或迁移本技能时读取。先确认当前 Codex 配置目录；默认使用 `~/.codex`。
+仅在安装、更新或迁移本技能时读取。不要输出 `config.toml`、`auth.json` 或密钥。
+
+## 准备 Python 3.11+
+
+运行 `python3 --version` 确认版本。Ubuntu 22.04 和 Debian 11 自带的 Python 低于 3.11，需要另装：
 
 ```bash
-set -eu
-codex_home="${CODEX_HOME:-$HOME/.codex}"
-skill_dir="$codex_home/skills/third-party-imagegen"
-python_bin="$(command -v python3)"
-
-test -f "$codex_home/config.toml" || { echo '请先确认 CODEX_HOME 是当前 Codex 配置目录。' >&2; exit 1; }
-test ! -e "$skill_dir" || { echo '技能已存在；更新前先备份并比较定制文件。' >&2; exit 1; }
-
-mkdir -p "$(dirname "$skill_dir")"
-cp -R '<仓库>/skill' "$skill_dir"
-"$python_bin" -m venv "$skill_dir/.venv"
-runner="$skill_dir/.venv/bin/python"
-"$runner" -m pip install -r "$skill_dir/requirements.txt"
-CODEX_HOME="$codex_home" "$runner" "$skill_dir/scripts/imagegen.py" --check
+sudo apt install python3.11        # Ubuntu 22.04 可能需要先添加 deadsnakes PPA
 ```
 
-从旧版迁移时，先把 `$codex_home/skills/cpa-imagegen` 完整备份到技能扫描目录外并移除，避免两个图片技能同时触发。更新前备份技能目录并保留 `$codex_home/third-party-imagegen.json`。卸载只移除 `skills/third-party-imagegen`，除非用户明确要求清除模型记忆。完成后重启或刷新 Codex 技能发现，显式调用 `$third-party-imagegen` 验证路由。
+安装脚本创建的 `.venv` 不含 pip，因此不需要 `python3-venv` 软件包。只有使用 `--with-pillow` 时，才需要额外安装 `python3.11-venv`（Debian/Ubuntu）以提供 pip。
 
+## 安装或更新
+
+在仓库根目录运行：
+
+```bash
+python3.11 install.py
+```
+
+Codex 配置目录不是默认的 `~/.codex` 时，先设置 `CODEX_HOME`，或传 `--codex-home <目录>`。可选参数见 [docs/install.md](../../docs/install.md)。
